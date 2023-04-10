@@ -27,18 +27,24 @@ def isfloat(string):
     return True
 
 
+"""Выход из машины состояний по команде /cancel или тексту 'Отмена'"""
+
+
 @router.message(UserLimits.first_limit, Command('cancel'))
 @router.message(UserLimits.second_limit, Command('cancel'))
 @router.message(UserLimits.tracking, Command('cancel'))
+@router.message(UserLimits.first_limit, Text('Отмена'))
+@router.message(UserLimits.second_limit, Text('Отмена'))
+@router.message(UserLimits.tracking, Text('Отмена'))
 async def cancel_price(message: types.Message, state: FSMContext):
-    global is_running
     await message.answer('Остановил работу', reply_markup=default_kb())
-    is_running = False
+    data_state = await state.get_data()
+    task_id = data_state.get('function_task_id')
+    for task in asyncio.all_tasks():
+        if task.get_name() == task_id:
+            task.cancel()
     await state.clear()
 
-# for task in asyncio.all_tasks():
-#                 if task.get_name() == task_id:
-#                     task.cancel()
 
 @router.message(Text('Получить курс $'))
 @router.message(Command('get_price'))
@@ -73,7 +79,7 @@ async def set_second_limit(message: types.Message, state: FSMContext):
     await message.answer(
         finish_set_limits_text.format(first=data_price['first_limit'], second=data_price['second_limit']),
         reply_markup=limits_set_kb())
-    await state.set_state(state=None)
+    await state.set_state(UserLimits.tracking)
 
 
 # Обработка не числовых значений границ
@@ -83,28 +89,35 @@ async def error_input(message: types.Message):
     await message.reply(error_input_text, reply_markup=cancel_kb())
 
 
-@router.message(Text('Начать отслеживание цены'))
-async def tracking_price(message: types.Message, state: FSMContext):
-    data_price = await state.get_data()
-    first_limit = data_price['first_limit']
-    second_limit = data_price['second_limit']
-    global is_running
-    is_running = True
-    await state.set_state(UserLimits.tracking)
+@router.message(UserLimits.tracking, Text('Начать отслеживание цены'))
+async def start_tracking(message: types.Message, state: FSMContext):
+    infinite_task_tracking = asyncio.ensure_future(tracking_price(message, state))
+    await state.update_data(function_task_id=infinite_task_tracking.get_name())
+    await message.answer('Начал работу')
 
-    while is_running:
+
+
+async def tracking_price(message: types.Message, state: FSMContext):
+    data_state = await state.get_data()
+    first_limit, second_limit, task_id = (value for value in data_state.values())
+    while True:
         price = await get_price()
         await message.answer('Проверка цены')
         if first_limit > float(price):
             await message.answer(f'Цена вышла за нижнюю границу!\n'
                                  f'Составляет {price}')
             await state.clear()
-            is_running = False
+            for task in asyncio.all_tasks():
+                if task.get_name() == task_id:
+                    task.cancel()
         elif second_limit < float(price):
             await message.answer('Цена вышла за верхнюю границу!\n'
                                  f'Составляет {price}')
             await state.clear()
-            is_running = False
+
+            for task in asyncio.all_tasks():
+                if task.get_name() == task_id:
+                    task.cancel()
         await asyncio.sleep(60)
 
 
