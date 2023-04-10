@@ -4,6 +4,7 @@ from config_reader import config
 
 
 async def get_price():
+    """ Возвращает цену доллара на данную минуту """
     parameters = {
         'slug': 'usd',
         'convert': 'RUB'
@@ -16,4 +17,4 @@ async def get_price():
         session.headers.update(headers_settings)
         async with session.get(config.url_price, params=parameters) as response:
             price = await response.text()
-            return str(json.loads(price)['data']['20317']['quote']['RUB']['price'])[:6]
+            return float(str(json.loads(price)['data']['20317']['quote']['RUB']['price'])[:6])

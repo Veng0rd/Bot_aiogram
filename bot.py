@@ -9,7 +9,7 @@ async def main_bot():
     # Запуск бота
     dp = Dispatcher(storage=MemoryStorage())
     bot = Bot(config.bot_token.get_secret_value(), parse_mode='HTML')
-    # await set_commands(bot)
+    await set_commands(bot)
     # Подключение роутеров
     dp.include_router(price_handlers.router)
     dp.include_router(default_commands.router)
