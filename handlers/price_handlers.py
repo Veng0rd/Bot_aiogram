@@ -5,9 +5,16 @@ from aiogram.filters import Command, Text
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
-from keyboards.kb_default import default_kb, cancel_kb, limits_set_kb
-from rate_price import get_price
+from keyboards.kb_default import default_kb
+from keyboards.limits_set_kb import limits_set_kb
+from keyboards.cancel_kb import cancel_kb
+
+from utils.isfloat import isfloat
+from utils.rate_price import get_price
+
 from answer_message import *
+
+from logger import logger
 
 router = Router()
 
@@ -20,46 +27,30 @@ class UserLimits(StatesGroup):
     tracking = State()
 
 
-def isfloat(string):
-    """ Функция проверять string является ли она числом, возвращает bool """
-    try:
-        float(string)
-    except ValueError:
-        return False
-    return True
-
-
-def cancel_infinite_task(task_id):
-    """ Функция останавливает функцию отслеживания цены """
+@router.message(Command('cancel'))
+@router.message(Text('Отмена'))
+async def cancel_price(message: types.Message, state: FSMContext):
+    """ Выход из машины состояний и из функции отслеживания, если она есть """
+    data_state = await state.get_data()
+    task_id = data_state.get('function_task_id')
     for task in asyncio.all_tasks():
         if task.get_name() == task_id:
             task.cancel()
-
-
-"""Выход из машины состояний по команде /cancel или тексту 'Отмена'"""
-
-
-@router.message(UserLimits.first_limit, Command('cancel'))
-@router.message(UserLimits.second_limit, Command('cancel'))
-@router.message(UserLimits.limits_is_set, Command('cancel'))
-@router.message(UserLimits.tracking, Command('cancel'))
-@router.message(UserLimits.first_limit, Text('Отмена'))
-@router.message(UserLimits.second_limit, Text('Отмена'))
-@router.message(UserLimits.limits_is_set, Text('Отмена'))
-@router.message(UserLimits.tracking, Text('Отмена'))
-async def cancel_price(message: types.Message, state: FSMContext):
-    await message.answer('Остановил работу', reply_markup=default_kb())
-    data_state = await state.get_data()
-    task_id = data_state.get('function_task_id')
-    cancel_infinite_task(task_id)
     await state.clear()
+    await message.answer('Операция завершена', reply_markup=default_kb())
+    logger.info(f'{message.from_user.username} exited FSM or tracking function')
 
 
 @router.message(Text('Получить курс $'))
 @router.message(Command('get_price'))
 async def get_price_handlers(message: types.Message):
     price = await get_price()
-    await message.answer(f'Курс доллара на данную минуту составляет: <b>{price}</b> руб', reply_markup=default_kb())
+    if price is None:
+        await message.answer(error_price_text, reply_markup=default_kb())
+        logger.warning(f'{message.from_user.username} failed to get dollar exchange rate')
+    else:
+        await message.answer(get_price_text.format(price), reply_markup=default_kb())
+        logger.info(f'{message.from_user.username} got the dollar rate')
 
 
 @router.message(Text('Задать границы'))
@@ -83,7 +74,7 @@ async def set_second_limit(message: types.Message, state: FSMContext):
     await state.update_data(second_limit=float(message.text))
     data_price = await state.get_data()
     await message.answer(
-        finish_set_limits_text.format(first=data_price['first_limit'], second=data_price['second_limit']),
+        finish_set_limits_text.format(data_price['first_limit'], data_price['second_limit']),
         reply_markup=limits_set_kb())
     await state.set_state(UserLimits.limits_is_set)
 
@@ -101,6 +92,12 @@ async def start_tracking(message: types.Message, state: FSMContext):
     await state.update_data(function_task_id=infinite_task_tracking.get_name())
     await message.answer(start_tracking_text, reply_markup=cancel_kb())
     await state.set_state(UserLimits.tracking)
+    logger.info(f'{message.from_user.username} start tracking')
+
+
+@router.message(UserLimits.tracking)
+async def is_tracking(message: types.Message):
+    await message.answer(is_tracking_text, reply_markup=cancel_kb())
 
 
 async def tracking_price(message: types.Message, state: FSMContext):
@@ -108,19 +105,20 @@ async def tracking_price(message: types.Message, state: FSMContext):
     first_limit, second_limit, task_id = (value for value in data_state.values())
     while True:
         price = await get_price()
-        if first_limit > price:
-            await message.answer(over_first_limit_text.format(difference=abs(first_limit - price), price=price),
-                                 reply_markup=default_kb())
-            await state.clear()
-            cancel_infinite_task(task_id)
-        elif second_limit < price:
-            await message.answer(over_second_limit_text.format(difference=abs(second_limit - price), price=price),
-                                 reply_markup=default_kb())
-            await state.clear()
-            cancel_infinite_task(task_id)
-        await asyncio.sleep(60)
-
-
-@router.message(UserLimits.tracking)
-async def is_tracking(message: types.Message):
-    await message.answer(is_tracking_text, reply_markup=cancel_kb())
+        match price:
+            case price if price is None:
+                logger.warning(f'{message.from_user.username} failed to get dollar exchange rate')
+                await message.answer(error_price_text, reply_markup=default_kb())
+                await cancel_price(message, state)
+            case price if first_limit > price:
+                logger.info(f'{message.from_user.username}: The dollar exchange rate is lower than the lower limit')
+                await message.answer(over_first_limit_text.format(abs(first_limit - price), price),
+                                     reply_markup=default_kb())
+                await cancel_price(message, state)
+            case price if second_limit < price:
+                logger.info(f'{message.from_user.username}: The dollar is higher than the upper limit')
+                await message.answer(over_second_limit_text.format(abs(second_limit - price), price),
+                                     reply_markup=default_kb())
+                await cancel_price(message, state)
+            case _:
+                await asyncio.sleep(60)
