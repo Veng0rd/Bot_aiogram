@@ -1,9 +1,11 @@
-import asyncio
-
 from aiogram import Router, types, F
 from aiogram.filters import Command, Text
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
+
+import asyncio
+
+from logger.logger import logger
 
 from keyboards.kb_default import default_kb
 from keyboards.limits_set_kb import limits_set_kb
@@ -13,8 +15,6 @@ from utils.isfloat import isfloat
 from utils.rate_price import get_price
 
 from answer_message import *
-
-from logger import logger
 
 router = Router()
 
@@ -73,10 +73,15 @@ async def set_first_limit(message: types.Message, state: FSMContext):
 async def set_second_limit(message: types.Message, state: FSMContext):
     await state.update_data(second_limit=float(message.text))
     data_price = await state.get_data()
-    await message.answer(
-        finish_set_limits_text.format(data_price['first_limit'], data_price['second_limit']),
-        reply_markup=limits_set_kb())
-    await state.set_state(UserLimits.limits_is_set)
+    if data_price['second_limit'] < data_price['first_limit']:
+        # Проверка больше ли нижняя граница верхней
+        await message.answer(error_limits)
+        await cancel_price(message, state)
+    else:
+        await message.answer(
+            finish_set_limits_text.format(data_price['first_limit'], data_price['second_limit']),
+            reply_markup=limits_set_kb())
+        await state.set_state(UserLimits.limits_is_set)
 
 
 # Обработка не числовых значений границ
@@ -86,6 +91,7 @@ async def error_input(message: types.Message):
     await message.reply(error_input_text, reply_markup=cancel_kb())
 
 
+# Старт отслеживания
 @router.message(UserLimits.limits_is_set, Text('Начать отслеживание цены'))
 async def start_tracking(message: types.Message, state: FSMContext):
     infinite_task_tracking = asyncio.create_task(tracking_price(message, state))
@@ -95,6 +101,7 @@ async def start_tracking(message: types.Message, state: FSMContext):
     logger.info(f'{message.from_user.username} start tracking')
 
 
+# Сообщение во время отслеживания
 @router.message(UserLimits.tracking)
 async def is_tracking(message: types.Message):
     await message.answer(is_tracking_text, reply_markup=cancel_kb())
@@ -110,15 +117,18 @@ async def tracking_price(message: types.Message, state: FSMContext):
                 logger.warning(f'{message.from_user.username} failed to get dollar exchange rate')
                 await message.answer(error_price_text, reply_markup=default_kb())
                 await cancel_price(message, state)
+
             case price if first_limit > price:
                 logger.info(f'{message.from_user.username}: The dollar exchange rate is lower than the lower limit')
                 await message.answer(over_first_limit_text.format(abs(first_limit - price), price),
                                      reply_markup=default_kb())
                 await cancel_price(message, state)
+
             case price if second_limit < price:
                 logger.info(f'{message.from_user.username}: The dollar is higher than the upper limit')
                 await message.answer(over_second_limit_text.format(abs(second_limit - price), price),
                                      reply_markup=default_kb())
                 await cancel_price(message, state)
+
             case _:
                 await asyncio.sleep(60)

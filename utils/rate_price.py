@@ -1,7 +1,7 @@
 import json
 import aiohttp
 from config_reader import config
-from logger import logger
+from logger.logger import logger
 
 
 @logger.catch

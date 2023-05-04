@@ -4,7 +4,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config_reader import config
 from handlers import default_handlers, price_handlers
 from commands import set_commands
-from logger import logger
+from logger.logger import logger
 
 
 @logger.catch

@@ -1,4 +1,4 @@
-def isfloat(string) -> bool:
+def isfloat(string: str) -> bool:
     """ Функция проверять string является ли она числом, возвращает bool """
     try:
         float(string)
