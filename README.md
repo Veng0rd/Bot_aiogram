@@ -15,6 +15,6 @@
 
 
 ## Скриншоты работы бота:
-![](img/1.jpg)
-![](img/2.jpg)
-![](img/3.jpg)
+<img src="img/1.jpg" width="50%" height="50%"/>
+<img src="img/2.jpg" width="50%" height="50%"/>
+<img src="img/3.jpg" width="50%" height="50%"/>
